@@ -1,0 +1,805 @@
+---
+title: "Assignment 2"
+author: "Sebastian Paglia - Camila Perez"
+date: "24/12/2021"
+output:
+  word_document: default
+  pdf_document: default
+editor_options:
+  chunk_output_type: console
+---
+#Clear plots and workspace
+```{r}
+if(!is.null(dev.list())) dev.off()
+rm(list=ls())
+```
+
+#Set working directory and load the dataframe
+```{r}
+library(readr)
+library(car)
+setwd("C:/Users/sebas/OneDrive/Escritorio/Subjects/SIM/Assignment 2 -Description and Data-20211203")
+filepath<-"C:/Users/sebas/OneDrive/Escritorio/Subjects/SIM/Assignment 2 -Description and Data-20211203/"
+df <- read_csv("aug_train.csv")
+```
+
+#Setting a random sample of 5000 observations as our df
+```{r}
+### Use birthday of 1 member of the group as random seed:
+set.seed(950524)
+# Random selection of x registers:
+sam<-as.vector(sort(sample(1:nrow(df),5000)))
+head(df)  #Taking a look to the first rows/instances (6 rows)
+
+df<-df[sam,]  # Subset of rows _ It will be my sample
+summary(df)
+save(list = c("df"),file="DatasetSample.RData")
+```
+
+#Clean workspace again and load our new df with 5000 observations
+```{r}
+rm(list=ls())
+filepath<-"C:/Users/sebas/OneDrive/Escritorio/Subjects/SIM/Assignment 2 -Description and Data-20211203/"
+load(paste0(filepath, "DatasetSample.RData"))
+```
+
+#Useful functions:
+```{r}
+calcQ <- function(x) {
+  s.x <- summary(x)
+  iqr<-s.x[5]-s.x[2]
+  list(souti=s.x[2]-3*iqr, mouti=s.x[2]-1.5*iqr, min=s.x[1], q1=s.x[2], q2=s.x[3], 
+       q3=s.x[5], max=s.x[6], mouts=s.x[5]+1.5*iqr, souts=s.x[5]+3*iqr ) }
+
+countNA <- function(x) {
+  mis_x <- NULL
+  for (j in 1:ncol(x)) {mis_x[j] <- sum(is.na(x[,j])) }
+  mis_x <- as.data.frame(mis_x)
+  rownames(mis_x) <- names(x)
+  mis_i <- rep(0,nrow(x))
+  for (j in 1:ncol(x)) {mis_i <- mis_i + as.numeric(is.na(x[,j])) }
+  list(mis_col=mis_x,mis_ind=mis_i) }
+
+countX <- function(x,X) {
+  n_x <- NULL
+  for (j in 1:ncol(x)) {n_x[j] <- sum(x[,j]==X) }
+  n_x <- as.data.frame(n_x)
+  rownames(n_x) <- names(x)
+  nx_i <- rep(0,nrow(x))
+  for (j in 1:ncol(x)) {nx_i <- nx_i + as.numeric(x[,j]==X) }
+  list(nx_col=n_x,nx_ind=nx_i) }
+```
+
+#Useful functions for packages treatment:
+```{r message=FALSE, warning=FALSE}
+# Introduce required packages:
+requiredPackages <- c("effects","FactoMineR","car", "factoextra","RColorBrewer","ggplot2","dplyr","ggmap","ggthemes","knitr")
+
+#use this function to check if each package is on the local machine
+#if a package is installed, it will be loaded
+#if any are not, the missing package(s) will be installed and loaded
+package.check <- lapply(requiredPackages, FUN = function(x) {
+  if (!require(x, character.only = TRUE)) {
+    install.packages(x, dependencies = TRUE)
+    library(x, character.only = TRUE)
+  }
+})
+#verify they are loaded
+# search()
+```
+
+
+#Checking df
+```{r}
+str(df)
+names(df)
+
+##Duplicated obs
+sum(duplicated(df))
+#No duplicated observation
+```
+
+#Setting as factors and numerics
+```{r}
+df<-df[,-c(1)] #remove enrollee_id (not significant variable)
+df$city = as.factor(df$city)
+df$training_hours = as.numeric(df$training_hours)
+df$gender = as.factor(df$gender)
+df$relevent_experience = as.factor(df$relevent_experience)
+df$enrolled_university = as.factor(df$enrolled_university)
+df$education_level = as.factor(df$education_level)
+df$major_discipline = as.factor(df$major_discipline)
+df$experience = as.factor(df$experience)
+df$company_size = as.factor(df$company_size)
+df$company_type = as.factor(df$company_type)
+df$last_new_job = as.factor(df$last_new_job)
+df$training_hours = as.numeric(df$training_hours)
+df$target = as.factor(df$target)
+```
+
+#Explore NA's
+```{r}
+NAs=sapply(df, function(y) round((sum(length(which(is.na(y))))/nrow(df))*100.00,2))
+data.frame(NAs)
+missings=countNA(df)
+sum(missings$mis_col)
+# There are 5475 missings observations before starting to clean our dataset
+```
+
+#Reducing "City" levels into "Standard_city"(100-199), "Big_city"(>200) and "Small_city"(<100). 
+```{r}
+head(summary(df$city))
+# No missings values
+
+plot(sort(table(df$city), decreasing=TRUE)[1:20],type='h', xlab ="", cex.axis = 0.8, las=2, main ='Frecuency of city', ylab = 'Frecuency')
+tab <- c(table(df$city))
+citynames <- setNames(names(tab), names(tab))
+citynames[tab >= 100 ] <- "Standard_city"
+citynames[tab > 200] <- "Big_city"
+citynames[tab < 100] <- "Small_city"
+
+#Taking into account "city" is a factor with 119 levels, we decided to create groups to reduce the amounts of levels, which will allow us to create more adequate and efficient models. 
+
+#Create new factor with proper labels
+df$city_group<- factor(citynames[as.character(df$city)])
+
+tab1<-prop.table(table(df$city,df$target))
+tab2<-prop.table(table(df$city_group,df$target));tab2
+par(mfrow=c(1,2))
+barplot(tab1, main = 'Contingency Table City - Target',xlab = 'Target', ylab = 'City')
+barplot(tab2, legend.text = T, main = 'Contingency Table Group City - Target',xlab = 'Target', ylab = 'Group City')
+par(mfrow=c(1,1))
+
+#With the contingency table we can observe that the proportions remain similar to the original ones.
+```
+
+#Cleaning factors: "Gender" and "Relevant Experience"; reducing levels, and setting NAs from factors as "No Indicated". 
+```{r}
+##Gender
+summary(df$gender)
+#1163 missing values
+plot(df$gender, main = 'Factor - Gender', ylab = 'Frequency')
+levels(df$gender) <- c("Female", "Male", "Other", "No Indicated")
+df$gender[which(is.na(df$gender))]<-"No Indicated"
+summary(df$gender)
+df$gender<-factor(df$gender, labels = c('Female','Male','No Indicated','No Indicated'))
+summary(df$gender)
+#It's a very unbalanced factor, "Male" represent the level with more frequency.
+#1163 missing values, plus 52 "Other". Total of 1215 as "No Indicated"
+
+
+##Relevant experience
+#Replace relevent for relevant
+df$relevant_experience<-df$relevent_experience
+df<-df[,-c(4)]
+summary(df$relevant_experience)
+levels(df$relevant_experience) <- c("Yes", "No")
+plot(df$relevant_experience, main = 'Factor - Relevant experience', ylab = 'Frequency')
+#It's an unbalanced factor, "Yes" represent the level with more frequency.
+#No missing values
+```
+
+#Cleaning factor "Enrolled university", reducing levels, and setting NAs from factors as "No Indicated". 
+```{r}
+##Enrolled university
+summary(df$enrolled_university)
+levels(df$enrolled_university) <- c("Full time course", "No enrollment", "Part time course", "No Indicated")
+df$enrolled_university[which(is.na(df$enrolled_university))]<-"No Indicated"
+summary(df$enrolled_university)
+plot(df$enrolled_university, main = 'Factor - Enrolled university', ylab = 'Frequency')
+#It's a very unbalanced factor, "No enrollment" represent the level with more frequency.
+#107 missing values as "No Indicated"
+
+##Reducing levels Enrolled university into "Yes", "No", "No Indicated"
+df$group_enrolled_university<-factor(df$enrolled_university, labels = c('Yes','No','Yes','No Indicated'))
+summary(df$group_enrolled_university)
+
+##contingency table
+tab3<-prop.table(table(df$enrolled_university,df$target)); tab3
+tab4<-prop.table(table(df$group_enrolled_university,df$target)); tab4
+par(mfrow=c(1,2))
+barplot(tab3, main = ' Contingency Table Enrolled university - Target',xlab = 'Target', ylab = 'City')
+barplot(tab4, legend.text = T, main = ' Contingency Table Group Enrolled University - Target',xlab = 'Target', ylab = 'Group City')
+par(mfrow=c(1,1))
+
+#With the contingency table we can observe that the proportions remain similar to the original ones.
+```
+
+#Cleaning factor "Major discipline", reducing levels, and setting NAs from factors as "No Indicated". 
+```{r}
+##major_discipline
+summary(df$major_discipline)
+levels(df$major_discipline) <- c(levels(df$major_discipline), 'Not Apply', 'No Indicated')
+df$major_discipline[which(df$education_level=='High School')] ='Not Apply'
+df$major_discipline[which(df$education_level=='Primary School')] ='Not Apply'
+df$major_discipline[which(is.na(df$major_discipline))]<-"No Indicated"
+df$major_discipline<-factor(df$major_discipline, labels = c('Arts&humanities','Business Degree','Arts&humanities','No Indicated','No Indicated','STEM', 'No Indicated', 'No Indicated'))
+summary(df$major_discipline)
+plot(df$major_discipline, main = 'Factor - Major discipline', ylab = 'Frequency')
+
+#It's a very unbalanced factor, "STEM" represent the level with more frequency.)
+# We grouped some disciplines in order to reduce levels of a factor variable, taking into account that we consider relevant to group Arts with Humanities, and, No Major, Other and NAs as No Indicated
+```
+
+#Cleaning factor "education_level";grouping and setting NAs from factors as "No Indicated". 
+```{r}
+##education_level
+summary(df$education_level)
+library(forcats)
+df$education_level <- fct_collapse(df$education_level, 
+  Pre_graduate= c('High School', 'Primary School'),
+  Post_graduate = c('Masters', 'Phd'),
+  Graduate = 'Graduate')
+summary(df$education_level)
+levels(df$education_level) <- c("Pre_graduate", "Post_graduate", "Graduate", "No Indicated")
+df$education_level[which(is.na(df$education_level))]<-"No Indicated"
+summary(df$education_level)
+plot(df$education_level, main = 'Factor - Education level', ylab = 'Frequency')
+
+# It's a very unbalanced factor, "Pre-graduate" represent the level with more frequency.
+# We grouped some categories in order to reduce levels according to the education level.
+#126 missing values as "No Indicated"
+
+##city_development_index
+summary(df$city_development_index)
+hist(df$city_development_index, main = 'City Development Index', ylab = 'Frequency', xlab='Index')
+#No missing values and it's doesn't seem normally distributed.
+```
+
+#Cleaning variable "Experience", create a factor version and setting NAs from factors as "No Indicated".
+```{r}
+##Experience 
+
+#numeric
+summary(df$experience) #in years
+#Has 14 missing values that we are going to treat afterwards
+sorted_labels<-suppressWarnings(paste(sort(as.integer(levels(df$experience)))))
+levels(df$experience) <- c("0", "21", "1", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "2", "20", "3", "4", "5", "6", "7", "8", "9")
+sorted_labels<-paste(sort(as.integer(levels(df$experience))))
+df$experience<-factor(df$experience, levels = sorted_labels)
+summary(df$experience)
+df$experience <- as.numeric(as.character(df$experience))
+table(df$experience)
+summary(df$experience)
+hist(df$experience, main = 'Experience', ylab = 'Frequency')
+#No missing values and it's doesn't seem normally distributed.
+
+#Experience as a factor
+df$f.experience <-df$experience
+#Grouping it in a new factor with 5 intervals
+table(df$f.experience)
+df$f.experience[df$experience<=5]<-"0-5"
+df$f.experience[df$experience > 5 & df$experience <= 10]<-"6-10"
+df$f.experience[df$experience > 10 & df$experience <= 15] <- "11-15"
+df$f.experience[df$experience > 15 & df$experience <= 20]<- "16-20"
+df$f.experience[df$experience == 21] <- ">20"
+df$f.experience = as.factor(df$f.experience)
+levels(df$f.experience) <- c(levels(df$f.experience), 'No Indicated')
+df$f.experience[which(is.na(df$f.experience))]<-"No Indicated"
+summary(df$f.experience)
+plot(df$f.experience, main = 'Factor - Experience', ylab = 'Frequency')
+#14 missing values as "No Indicated"
+```
+
+##Cleaning factors: "Company size" and "Company Type",  reducing levels, and setting NAs from factors as "No Indicated". 
+```{r}
+##company_size
+summary(df$company_size)
+df$company_size <- factor(df$company_size, labels = c("SME", "SME", "SME","Big", "Big","SME", "Big", "Big"))
+levels(df$company_size) <- c(levels(df$company_size),"No Indicated")
+df$company_size[which(is.na(df$company_size))]<-"No Indicated"
+plot(df$company_size,cex.axis = 0.8, main = 'Company size', ylab = 'Frequency')
+summary(df$company_size)
+#Regroup into Small and Medium-sized Enterprises or Big companies
+#1573 missing values as "No Indicated"
+
+##company_type
+summary(df$company_type)
+levels(df$company_type) <- c(levels(df$company_type),'No Indicated')
+df$company_type[which(is.na(df$company_type))]<-"No Indicated"
+df$company_type <- factor(df$company_type, labels = c("Startup", "Startup", "NGO", "No Indicated", "Public Sector","Private Limited Company", "No Indicated"))
+plot(df$company_type, cex.axis = 0.8, main = 'Factor : Company type', ylab = 'Frequency')
+summary(df$company_type)
+#Unify Startups, and Other with "No Indicated"
+# It's a very unbalanced factor, "Private Limited Company" represent the level with more frequency.
+#1639 missing values as no indicated
+```
+
+##Cleaning factor: "Last new job" reducing levels, and setting NAs from factors as "No Indicated".
+```{r}
+##last_new_job
+summary(df$last_new_job)
+df$last_new_job <- factor(df$last_new_job, labels = c(">4", "1", "2","3", "4","None"))
+levels(df$last_new_job) <- c(levels(df$last_new_job),'No Indicated')
+df$last_new_job[which(is.na(df$last_new_job))]<-"No Indicated"
+summary(df$last_new_job)
+plot(df$last_new_job, cex.axis = 0.8, main = 'Factor : Last new Job', ylab = 'Frequency')
+#Unbalanced factor, "1" represent the level with more frequency.
+#94 missing values as "No Indicated"
+
+##Group them into greater than cero, never or no indicated
+df$group_last_new_job<-factor(df$last_new_job, labels = c('>0','>0','>0','>0','>0','None','No Indicated'))
+summary(df$group_last_new_job)
+plot(df$group_last_new_job, cex.axis = 0.8, main = 'Factor : Last new Job', ylab = 'Frequency')
+
+##contingency table
+tab5<-prop.table(table(df$last_new_job,df$target))
+tab5
+tab6<-prop.table(table(df$group_last_new_job,df$target))
+tab6
+par(mfrow=c(1,2))
+barplot(tab5, main = 'Contingency Table Last new job - Target',xlab = 'Target', ylab = 'City')
+barplot(tab6, legend.text = T, main = 'Contingency Table Group Last new job - Target',xlab = 'Target', ylab = 'Group City')
+par(mfrow=c(1,1))
+
+#With the contingency table we can observe that the proportions remain equivalent to the original ones.
+```
+
+##Inspection of the variables "training hours" and "target"
+```{r}
+##training_hours
+summary(df$training_hours)
+hist(df$training_hours)
+#No missing values and it's doesn't seem normally distributed. 
+
+
+##Target
+summary(df$target) #0: Not looking for a job change. 1: Looking for a job change
+plot(df$target, main='Target')
+#No missing values
+#Very unbalanced factor, "0" represent the level with more frequency.
+
+summary(df) 
+```
+
+
+#Checking if any new duplicated observation was generated.
+```{r}
+sum(duplicated(df))
+df <- df[-c(which(duplicated(df))),]
+dim(df)
+summary(df)
+
+#We found 7 observations that were duplicated, so we removed them from our dataframe.
+```
+
+
+#CountNAs
+```{r}
+missings=countNA(df)
+sum(missings$mis_col)
+summary(df)
+
+#So far we have 14 missing values from experience (numerical) that we haven't treated yet.
+```
+
+
+#Treating Univariate Outliers
+```{r}
+str(df)
+names(df)
+par(mfrow=c(1,1))
+
+
+##experience
+Boxplot(df$experience, main="Boxplot Experience", ylab='frequency') #No outliers
+
+
+##city_development_index
+Boxplot(df$city_development_index, main="Boxplot City Development Index", ylab='frequency')
+upsevout<-quantile(df$city_development_index,0.75, na.rm = T)+3*(quantile(df$city_development_index,0.75, na.rm = T)-quantile(df$city_development_index,0.25, na.rm = T))
+abline(h=upsevout,col="red",lwd=2)
+uploutse<-which(df$city_development_index>upsevout[1]);length(uploutse)
+
+losevout<-quantile(df$city_development_index,0.25, na.rm = T)-3*(quantile(df$city_development_index,0.75, na.rm = T)-quantile(df$city_development_index,0.25, na.rm = T))
+abline(h=losevout,col="red",lwd=2)
+loloutse<-which(df$city_development_index<losevout[1]);length(loloutse)
+#No severe outliers
+
+
+##training hours
+Boxplot(df$training_hours, main="Boxplot Traning Hours", ylab='frequency')
+upsevout<-quantile(df$training_hours,0.75, na.rm = T)+3*(quantile(df$training_hours,0.75, na.rm = T)-quantile(df$training_hours,0.25, na.rm = T))
+abline(h=upsevout,col="red",lwd=2)
+uploutse<-which(df$training_hours>upsevout[1]);length(uploutse)
+#Upper threshold that identifies 57 severe outliers
+
+losevout<-quantile(df$training_hours,0.25, na.rm = T)-3*(quantile(df$training_hours,0.75, na.rm = T)-quantile(df$training_hours,0.25, na.rm = T))
+abline(h=losevout,col="red",lwd=2)
+loloutse<-which(df$training_hours<losevout[1]);length(loloutse)
+
+
+##Setting outliers as NAs and also as "No indicated", the variable created to compute the sum of error and unknown observations. 
+df$No_Indicated = 0
+df$No_Indicated[which(df$training_hours>upsevout)] = 1
+df$training_hours[which(df$training_hours>upsevout)] = NA
+summary(df$training_hours)
+#57 severe outliers as NAs
+
+table(df$No_Indicated)
+```
+
+
+#CountNAs
+```{r}
+missings=countNA(df)
+sum(missings$mis_col)
+##total of 71  missing values (14 from experience + 57 from training hours)
+```
+
+
+#NAs Imputation 
+```{r}
+library(missMDA)
+nb <- estim_ncpPCA(df$training_hours,method.cv = "Kfold", verbose = FALSE) # estimate 
+nb$ncp
+names(df)
+res.pca<-imputePCA(df[,c(11,7)], ncp=0)
+
+summary(df[,c(11,7)])# original
+summary(res.pca$completeObs)# imputed
+#No significant variation between original and imputed, therefore, imputation was done correctly.
+
+##replace imputed observations
+df[,c(11,7)]<-res.pca$completeObs
+missings=countNA(df)
+sum(missings$mis_col)
+```
+
+
+#Multivariate outliers
+```{r}
+library(chemometrics)
+names(df)
+res.mout <- Moutlier( df[,c(2,11)], quantile = 0.999, plot=F)
+
+par(mfrow=c(1,1))
+plot( res.mout$md, res.mout$rd, main= 'Multivariate Outliers', ylab='frequency' )
+abline( h=res.mout$cutoff, lwd=2, col="red")
+abline( v=res.mout$cutoff, lwd=2, col="red")
+mout_out <- which((res.mout$md > res.mout$cutoff ) & (res.mout$rd > res.mout$cutoff) );mout_out
+str(mout_out)
+summary(df)
+mout=df[c(mout_out),];mout
+summary(mout)
+
+#Taking into account the numerical variables (city_development_index and training_hours), we can observe 21 possible multivariate outliers (using 99.9% CI). Relevant characteristics in common: 
+#- None of this observations has Female as gender. However, the df is unbalanced so it is not rare that they share this characteristic. The same happens with No enrollment (enrolled_university), STEM (major_discipline), SME (company_size), Private Limited Company (company_type), last_new_job, relevant_experience, No enrolled to a university, f.experience and group_last_new_job;
+#- Most of them are Pre-graduate 86%, while in the df the proportion of Pre-graduate is 60%;
+#- Equity distributed on target variable, whereas, in the df the proportions are 76% related to 1 (look for a job change) and 34% to 0 (not looking for a job change);
+#- 52% of the multivariate outliers live in small cities and 38% in big ones. But in the df the relation is inverted, 39% live in small cities and 55% in big ones. 
+#However, in this case and based on the plot we decided to maintain those observations because we don't see very clear that they should be treated as outliers or atypical observations among our dataset.
+```
+
+#Unknown, errors and NA's variable
+```{r}
+names(df)
+df_group<-df[,-c(1,4,10,16)]
+df$No_Indicated = (rowSums(df_group[,c(1:13)] == "No Indicated") + df$No_Indicated)
+df_group$No_Indicated <- as.numeric(as.character(df$No_Indicated))
+table(df_group$No_Indicated)
+sum(df_group$No_Indicated>0)
+#There are 2777 observations as "No Indicated" 
+```
+
+
+#Correlation with "No Indicated" variable
+```{r}
+library(FactoMineR)
+names(df_group)
+res.con <- condes(df_group, num.var=14, proba = 0.01 )
+res.con$quanti
+res.con$quali
+res.con$category
+
+#The numerical variables are not highly correlated with our new variable. Between categorical variables, the most important and with higher R2 are "company_size" and "company_type" with 64% and 63%, followed by education_level and major_discipline with 33% and 32%.
+```
+
+
+#Train - Test - Split our dataset into train and test with 75% and 25% respectively.
+```{r}
+names(df)
+new_df<-df[,-c(1,4,10,18)]
+set.seed(950524)
+ind <- sample(2, nrow(new_df), replace = T, prob = c(0.75, 0.25))
+train <- new_df[ind == 1,]
+test <- new_df[ind == 2,]
+```
+
+
+#Balance review
+```{r}
+names(train)
+dim(train)
+plot(df$target, main="Target", ylab='frequency')
+plot(df$city_group, main="City Group", ylab='frequency')
+plot(df$gender, main="Gender", ylab='frequency')
+plot(df$education_level, main="Education level", ylab='frequency')
+plot(df$major_discipline, main="Major Discipline", ylab='frequency')
+plot(df$company_size, main="Company Size", ylab='frequency')
+plot(df$company_type, main="Company Type", ylab='frequency')
+plot(df$group_last_new_job, main="Last New Job", ylab='frequency')
+plot(df$relevant_experience, main="Relevant Experience", ylab='frequency')
+plot(df$group_enrolled_university, main="Group Enrolled University", ylab='frequency')
+plot(df$f.experience, main="Factor Experience", ylab='frequency')
+#We can see, as we checked above, that our dataset is unbalanced in many variables but we are not going to treat this issue in the project.
+```
+
+
+#Building models
+```{r}
+#Total model
+m0 <- glm(target ~ .,data=train,family=binomial)
+summary(m0) # AIC: 3358.9 - reference
+BIC(m0) # BIC: 3545.5
+# We will check AIC and BIC for every model, taking into account that BIC is a variant of AIC with a stronger penalty for including additional variables to the model.
+```
+
+#Numeric model
+```{r}
+mnumeric <- glm(target ~ city_development_index +  training_hours + experience ,data=train,family=binomial )
+summary(mnumeric) # AIC: 3661.7
+BIC(mnumeric) # BIC: 3686.6
+
+mnumeric_2 <- glm(target ~ poly(city_development_index,2) +  training_hours + experience ,data=train,family=binomial)
+summary(mnumeric_2) # AIC: 3632.1
+BIC(mnumeric_2) # BIC: 3663.2
+anova(mnumeric, mnumeric_2, test="Chisq")
+#We reject H0 so we can say that both models are not equivalent and maintain order 2 on city_development_index
+
+mnumeric_3 <- glm(target ~ city_development_index +  poly(training_hours,2) + experience ,data=train,family=binomial)
+summary(mnumeric_3) # AIC: 3661.9
+BIC(mnumeric_3) # BIC: 3693
+anova(mnumeric, mnumeric_3, test="Chisq")
+#We fail to reject H0 so we can say that both models are equivalent and maintain training_hours without transformation
+
+mnumeric_4 <- glm(target ~ city_development_index + training_hours +  poly(experience,2) ,data=train,family=binomial)
+summary(mnumeric_4) # AIC: 3663
+BIC(mnumeric_4) # BIC: 3694.1
+anova(mnumeric, mnumeric_4, test="Chisq")
+#We fail to reject H0 so we can say that both models are equivalent and maintain experience without transformation
+
+#The best numerical model obtained is mnumeric_2 (with second order over city_development_index)
+```
+
+#Factor o numeric for "experience"
+```{r}
+#factor experience or numeric experience
+m1 <- glm(formula = target ~ poly(city_development_index,2) + f.experience + training_hours, family = binomial, data = train)
+summary(m1) # AIC: 3640.7
+BIC(m1) # BIC: 3696.7
+AIC(mnumeric_2,m1)
+BIC(mnumeric_2,m1)
+#mnumeric_2 has a lower AIC and BIC number, so we keep "experience" as numerical, according to Akaike test and Bayesian Information Criterion.
+```
+
+#Numeric model after treatment
+```{r}
+step(mnumeric_2)
+mnumeric_5<-glm(target ~ poly(city_development_index,2) + experience ,data=train,family=binomial)
+summary(mnumeric_5) # AIC: 3630.3
+BIC(mnumeric_5) # BIC: 3655.2
+#After applying step function, we removed training_hours since it is not significant to our model.
+```
+
+#Influential data
+```{r}
+library(chemometrics)
+influenceIndexPlot(mnumeric_5,id=c(method=abs(cooks.distance(mnumeric_5)), n=3))
+train[c("2289","2737","3007"),c(1,5,9)]
+summary(train[,c(1,5,9)])
+Boxplot(cooks.distance(mnumeric_5))
+#Taking into account the potentially highly influential observations, we can summarise that the three of them belong to the first quartile of the variable city_development_index, below the mean of experience and none of them would look for a job change. Therefore, we decided to remove them from the train dataset.
+train<-train[-c(2289,2737,3007),]
+Boxplot(hatvalues(mnumeric_5))
+summary(train[c(1906,1305),])
+#There are two observations with the most important hat value: obs 1906 and 1305. We can see that both of them belong to the group that look for a job change.
+
+mnumericfinal<-glm(target ~ poly(city_development_index,2) + experience ,data=train,family=binomial)
+summary(mnumericfinal) # AIC: 3616.4
+BIC(mnumericfinal) # BIC: 3641.2
+influenceIndexPlot(mnumericfinal,id=c(method=abs(cooks.distance(mnumericfinal)), n=3))
+#influenceIndexPlot after removing the most influential data. We can observe new influential data but the scale is different than before, so we will keep this observations.
+```
+
+#Model: numeric + factors 
+```{r}
+#numeric + factors 
+m_num_fact <- glm(target ~ poly(city_development_index,2) + experience + gender + education_level + major_discipline + company_size + company_type + city_group + relevant_experience + group_enrolled_university+ group_last_new_job, family = binomial, data = train)
+summary(m_num_fact) # AIC: 3339.4
+BIC(m_num_fact) # BIC: 3494.8
+
+step(m_num_fact)
+#step model
+m2 <- glm(formula = target ~ poly(city_development_index, 2) + experience + education_level + company_size + company_type + city_group + group_enrolled_university + group_last_new_job, family = binomial, data = train)
+summary(m2) # AIC: 3329.7
+BIC(m2) # BIC: 3447.8
+Anova(m2,test="LR")
+vif(m2)
+# company_size and company_type are correlated, so we will check a new model removing company_type because is the one with less significance in our model (checked in Anova test)
+
+m3<- glm(formula = target ~ poly(city_development_index, 2) + experience + education_level + company_size + city_group + group_enrolled_university + group_last_new_job, family = binomial, data = train)
+summary(m3) # AIC: 3330.9
+BIC(m3) # BIC: 3424.2
+Anova(m3,test="LR")
+anova(m2,m3, test="Chisq")
+vif(m3)
+# Although the AIC is a little bit higher, the BIC is lower. Hence, we decided to remove company_type taking into account the statistical p-value on anova test over 0.05, failing to reject the null hypothesis, improving generalized VIF values and using less number of parameters as possible, maintaining the most significant variables in our new best model so far, m3.
+```
+
+#Influential observation of best model
+```{r}
+#Influential data
+influenceIndexPlot(m3,id=c(method=abs(cooks.distance(m3)), n=3))
+summary(train[c("712"),])
+summary(train)
+Boxplot(cooks.distance(m3), main="Cooks Distance model numerical v. + factors")
+# In this case, the cooksdistance is not much greater than the rest of the observations and checking its value on the variables, compared to the rest of the dataset, we can see that in most of the parameters is not very influential, with typical values. Therefore, we decided to keep it in our train dataset.
+```
+
+#Interactions
+
+#Interactions of poly(city_development_index,2)
+```{r}
+m4 <- glm(target ~ poly(city_development_index,2) * experience + education_level + company_size + city_group + group_enrolled_university + group_last_new_job, data=train,family=binomial)
+summary(m4)#AIC: 3332.1
+BIC(m4) # BIC: 3437.9
+m4.1<- glm(target ~experience  + poly(city_development_index,2) * education_level + company_size + city_group + group_enrolled_university  + group_last_new_job,data=train,family=binomial )
+summary(m4.1)#AIC: 3329.1
+BIC(m4.1) # BIC: 3459.6
+m4.2<-  glm(target ~experience  +  education_level + poly(city_development_index,2) * company_size + city_group + group_enrolled_university  + group_last_new_job,data=train,family=binomial)
+summary(m4.2)#AIC: 3258.6
+BIC(m4.2) # BIC: 3376.8
+m4.3<- glm(target ~experience  +  education_level +  company_size + poly(city_development_index,2) * city_group + group_enrolled_university + group_last_new_job,data=train,family=binomial )
+summary(m4.3)#AIC: 3331.6
+BIC(m4.3) # BIC: 3443.5
+m4.4<- glm(target ~experience  +  education_level  +  company_size + city_group + poly(city_development_index,2) * group_enrolled_university + group_last_new_job,data=train,family=binomial )
+summary(m4.4)#AIC:3326.7
+BIC(m4.4) # BIC: 3444.9
+m4.5<- glm(target ~experience  +  education_level +  company_size + city_group + group_enrolled_university + poly(city_development_index,2) * group_last_new_job, data=train,family=binomial )
+summary(m4.5)#AIC: 3329.9
+BIC(m4.5) # BIC: 3448
+
+Anova(m4.2, test = "LR")
+anova(m3, m4.2, test = "Chisq")
+##Best model obtained so far is m4.2 with AIC: 3258.6 and BIC: 3376.8. We have statistical arguments to reject the null hypothesis and confirm that it is not equal to m3.
+```
+
+#Interactions of group_enrolled_university
+```{r}
+m5<- glm(target ~group_enrolled_university * experience  +  education_level + poly(city_development_index,2) + company_size + city_group + group_last_new_job,data=train,family=binomial)
+summary(m5) # AIC: 3331
+BIC(m5) # BIC: 3436.7
+m5.1<- glm(target ~ experience  + group_enrolled_university * education_level + poly(city_development_index,2) + company_size + city_group+ group_last_new_job,data=train,family=binomial)
+summary(m5.1) # AIC: 3335.3
+BIC(m5.1) # BIC: 3465.9
+m5.2<- glm(target ~ experience  +  education_level + poly(city_development_index,2) + group_enrolled_university * company_size + city_group+ group_last_new_job,data=train,family=binomial)
+summary(m5.2) #AIC: 3338.3
+BIC(m5.2) # BIC: 3456.4
+m5.3<- glm(target ~ experience  +  education_level + poly(city_development_index,2) + company_size + group_enrolled_university * city_group+ group_last_new_job,data=train,family=binomial)
+summary(m5.3) #AIC: 3337.3
+BIC(m5.3) # BIC: 3455.5
+m5.4<- glm(target ~ experience  +  education_level + poly(city_development_index,2) + company_size + city_group + group_enrolled_university * group_last_new_job,data=train,family=binomial)
+summary(m5.4) #AIC: 3333.1
+BIC(m5.4) # BIC: 3451.3
+
+##Best model so far is m4.2 with AIC: 3258.6 and BIC: 3376.8.
+```
+
+#Interactions of educational_level
+```{r}
+m6<-  glm(target ~ education_level * experience + poly(city_development_index,2) + company_size + city_group + group_enrolled_university + group_last_new_job, data=train, family=binomial)
+summary(m6)  # AIC: 3331.7
+BIC(m6) # BIC: 3443.6
+m6.1<- glm(target ~ experience + poly(city_development_index,2) + education_level * company_size + city_group + group_enrolled_university + group_last_new_job, data=train, family=binomial)
+summary(m6.1) # AIC: 3332.9
+BIC(m6.1) # BIC: 3463.5
+m6.2<- glm(target ~ experience + poly(city_development_index,2) + company_size + education_level * city_group + group_enrolled_university + group_last_new_job, data=train, family=binomial)
+summary(m6.2) # AIC: 3340.1
+BIC(m6.2) # BIC: 3470.7
+m6.3<- glm(target ~ experience + poly(city_development_index,2) + company_size + city_group + group_enrolled_university + education_level * group_last_new_job, data=train, family=binomial)
+summary(m6.3) # AIC: 3330.3
+BIC(m6.3) # BIC: 3460.9
+
+##Best model so far is m4.2 with AIC: 3258.6 and BIC: 3376.8.
+```
+
+#Interactions of experience
+```{r}
+m7<- glm(target ~ education_level + poly(city_development_index,2) + experience * company_size + city_group + group_enrolled_university + group_last_new_job, data=train, family=binomial)
+summary(m7)  # AIC: 3323.9
+BIC(m7) # BIC: 3429.6
+m7.1<- glm(target ~ education_level + poly(city_development_index,2) + company_size + experience * city_group + group_enrolled_university + group_last_new_job, data=train, family=binomial)
+summary(m7.1)  # AIC: 3334.8
+BIC(m7.1) # BIC: 3440.5
+m7.2<- glm(target ~ education_level + poly(city_development_index,2) + company_size + city_group + group_enrolled_university + experience * group_last_new_job, data=train, family=binomial)
+summary(m7.2)  # AIC: 33327.1
+BIC(m7.2) # BIC: 3432.9
+
+##Best model so far is m4.2 with AIC: 3258.6 and BIC: 3376.8.
+```
+
+#Interactions of company_size
+```{r}
+m8<- glm(target ~  experience + education_level + poly(city_development_index,2) + company_size * city_group + group_enrolled_university + group_last_new_job, data=train, family=binomial)
+summary(m8)  # AIC: 3334.5
+BIC(m8) # BIC: 3452.7
+m8.1<-  glm(target ~  experience + education_level + poly(city_development_index,2) + city_group + group_enrolled_university + company_size * group_last_new_job, data=train, family=binomial)
+summary(m8.1)  # AIC: 3327.4
+BIC(m8.1) # BIC: 3445.6
+
+##Best model so far is m4.2 with AIC: 3258.6 and BIC: 3376.8.
+```
+
+#Interactions of city_group and group_last_new_job
+```{r}
+m9<- glm(target ~  experience + education_level + poly(city_development_index,2) + company_size + group_enrolled_university + city_group * group_last_new_job, data=train, family=binomial)
+summary(m9)  # AIC: 3335
+BIC(m9) # BIC: 3453.2
+
+##Best model so far is m4.2 with AIC: 3258.6 and BIC: 3376.8.
+```
+
+
+#Analize Best Model 
+```{r}
+summary(m4.2)#AIC: 3258.6
+BIC(m4.2) # BIC: 3376.8
+Anova(m4.2, test = "LR")
+
+# Test hosmer-lemeshow
+library(ResourceSelection)
+hl_test <- hoslem.test(m4.2$y, fitted(m4.2));hl_test
+
+# Although small values with large p-values on Hosmer-Lemeshow test indicate a good fit while large values with p-values below 0.05 indicate a poor fit, searching for more information regarding this test, we found that for larger datasets (>1000 observations) it’s highly likely that it will fail. Therefore we'll evaluate our model with more tools.
+
+#Residual Analisis Best Model
+library(effects)
+summary(m4.2)
+plot(allEffects(m4.2),ask=FALSE)
+# The plots show how the target variable respond to variability among the different parameters. For example, as greater the experience, less is the probability that a person looks for a job change. This is validated also with the second plot due to is more probable that people more experienced are those with a post graduate education and also whose are less probable to look for a job change. In addition, people living in a big city are more susceptible to look for a job change, than people living in small cities.
+
+influenceIndexPlot(m4.2,id=c(method=abs(cooks.distance(m4.2)), n=5))
+# We can see that the observation 712 is still the one with more Cook's distance. However, as we analyzed before, taking into account the characteristics that it has, we still decide to keep it into our data.
+
+marginalModelPlots(m4.2,id=list(method=abs(cooks.distance(m4.2)), n=5))
+# As we can see from the plots above, the model follows the same pattern, so we have significant evidence to affirm that the model we reached fits well.
+
+#For binary targets with many factors variables into the model (with interaction between some of them and with many levels for each), the Added-Variable Plot does not deliver much valuable information to the analysis, so we decided not to approach it in our analysis.
+```
+
+#Predict the probability of a candidate will work for the company
+```{r}
+prediction_table <- predict(m4.2, newdata=test,type="response")
+probabtarget <- ifelse(prediction_table<0.5,0,1);probabtarget
+cm <- table(probabtarget,test$target);cm
+
+library(cvAUC)
+AUC(predict(m4.2, type="response"), train$target) #same calculation, but manually : accuracy <- sum(cm[1], cm[4]) / sum(cm[1:4]);accuracy
+
+precision <- cm[4] / sum(cm[4], cm[2]); precision
+recall <- cm[4] / sum(cm[4], cm[3]); recall
+fscore <- (2 * (recall * precision))/(recall + precision); fscore
+
+#Taking into account our best model (m4.2), we obtained the following rates :
+# - Accuracy : 79%, which indicates overall, how often is the classifier correct. 
+# - Precision : 64%, which indicates  when it predicts yes, how often is it correct.
+# - Recall: 42%, which indicates when it's actually yes, how often does it predict yes. (true positive rate)
+# - Fscore: 51%. This is a weighted average of the recall and precision.
+
+# We focus our analysis on accuracy rate, and since this value is between 70% and 80%, we can indicate that it's a good model considering that we didn't treat unbalance issue because it was out of the project scope.
+
+#ROC curve
+
+roc<-prediction(predict(m4.2,type="response",newdata=test), test$target)
+par(mfrow=c(1,1))
+plot(performance(roc,"tpr","fpr",fpr.stop=0.05), col = "blue", main = "ROC Curve")
+abline(0,1,lty=2,col='red')
+
+#Taking into account our AUC= 79%, ant it represents the area under the ROC curve, we can observe that the curve approaches closer to the top-left corner, representing that model performance is good. This ROC curve allow us to visualize the true positive rate (sensitivity) vs the false positive rate (specificity)
+
+#Probability of a candidate will look for a job change and potentially work for the company 
+prob_1 <- cm[4] / sum(cm[1:4]);prob_1*100
+
+# There is 11% of probability that a candidate will look for a job change and potentially work for the company.
+```
